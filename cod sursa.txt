@@ -1,0 +1,168 @@
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from IPython.display import display
+
+# =============================
+# 1. ÎNCĂRCAREA ȘI EXPLORAREA SETULUI DE DATE
+# =============================
+data_path = "C:/Users/Invatator/Desktop/5 - Smart Traffic Light Control for Optimized Traffic Flow/Metro_Interstate_Traffic_Volume.csv"
+df = pd.read_csv(data_path)
+
+display(df.head(10))
+display(df.tail(10))
+display(df.dtypes.to_frame(name='Dtype'))
+display(df.isnull().sum().to_frame(name='Missing Values'))
+
+# =============================
+# 2. PREPROCESAREA DATELOR
+# =============================
+df['date_time'] = pd.to_datetime(df['date_time'], errors='coerce')
+df['hour'] = df['date_time'].dt.hour
+df.drop(columns=['date_time'], inplace=True)
+df = df.dropna()
+
+categorical_features = ['weather_main', 'weather_description', 'holiday']
+numeric_features = ['temp', 'rain_1h', 'snow_1h', 'clouds_all', 'hour']
+
+ohe = OneHotEncoder(handle_unknown='ignore')
+scaler = StandardScaler()
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', scaler, numeric_features),
+        ('cat', ohe, categorical_features)
+    ]
+)
+
+# =============================
+# 3. SEPARAREA În SETURI DE ANTRENARE ȘI TEST
+# =============================
+X = df.drop(columns=['traffic_volume'])
+y = df['traffic_volume']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# =============================
+# 4. ANTRENAREA MODELELOR
+# =============================
+models = {
+    "Linear Regression": LinearRegression(),
+    "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+    "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42)
+}
+
+results = {}
+
+for name, model in models.items():
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', model)
+    ])
+    
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+    
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, y_pred)
+    
+    results[name] = {'MAE': mae, 'MSE': mse, 'RMSE': rmse, 'R2': r2}
+
+display(pd.DataFrame(results).T)
+
+# =============================
+# 5. GRAFIC: TRAFIC În FUNCȚIE DE ORĂ ȘI VREME
+# =============================
+
+data_path =  "C:/Users/Invatator/Desktop/5 - Smart Traffic Light Control for Optimized Traffic Flow/Metro_Interstate_Traffic_Volume.csv"
+df = pd.read_csv(data_path)
+
+# Conversia coloanei 'date_time' la format datetime și extragerea orelor
+df['date_time'] = pd.to_datetime(df['date_time'], errors='coerce')
+df['hour'] = df['date_time'].dt.hour
+
+# Eliminarea valorilor lipsă
+df = df.dropna(subset=['traffic_volume', 'hour', 'weather_main'])
+
+# Calcularea traficului mediu pe oră pentru fiecare condiție meteo
+traffic_by_weather = df.groupby(['hour', 'weather_main'])['traffic_volume'].mean().reset_index()
+
+# Crearea unui grafic de linii pentru a vizualiza variația traficului
+plt.figure(figsize=(14, 7))
+sns.lineplot(data=traffic_by_weather, x='hour', y='traffic_volume', hue='weather_main', marker='o')
+plt.title('Variația traficului în funcție de oră și condițiile meteo')
+plt.xlabel('Ora')
+plt.ylabel('Volum mediu de trafic')
+plt.xticks(np.arange(0, 24, 1))
+plt.ylim(0, 6000)  # Setăm limita superioară a axei Y la 6000
+plt.legend(title="Condiții meteo")
+plt.grid(True)
+plt.show()
+# =============================
+# 5. ANALIZA SERIILOR TEMPORALE CU ARIMA 
+# =============================
+
+# Verificăm dacă există valori duplicate pe ore
+traffic_series = df[['hour', 'traffic_volume']].groupby('hour').mean()
+
+# Aplicăm diferențierea pentru a stabiliza datele (d=1 în ARIMA)
+traffic_series_diff = traffic_series.diff().dropna()
+
+# Construim modelul ARIMA cu parametri ajustați
+model = ARIMA(traffic_series_diff, order=(1,1,1))  
+model_fit = model.fit()
+
+# Afișăm sumarul modelului
+print(model_fit.summary())
+
+# Vizualizăm previziunile
+plt.figure(figsize=(14, 7))
+plt.plot(traffic_series, label='Date Reale')
+plt.plot(model_fit.fittedvalues.cumsum() + traffic_series.values[0], color='red', label='Previziuni ARIMA')
+plt.legend()
+plt.title("Previziuni de trafic folosind ARIMA (corectat)")
+plt.show()
+
+
+# =============================
+# 6. EVALUAREA MODELELOR
+# =============================
+results_df =pd.DataFrame(results).T
+print("Performanța modelelor:")
+print(results_df.to_string())
+
+# =============================
+# 7. PREDICȚIA VOLUMULUI DE TRAFIC În FUNCȚIE DE CONDIȚII
+# =============================
+def predict_traffic(model_name, temp, rain, snow, clouds, hour, weather_main, weather_description, holiday):
+    model = models[model_name]
+    
+    sample_data = pd.DataFrame([[temp, rain, snow, clouds, hour, weather_main, weather_description, holiday]],
+                               columns=numeric_features + categorical_features)
+    
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', model)
+    ])
+    
+    pred = pipeline.predict(sample_data)[0]
+    return pred
+
+# Exemplu de predicție
+predicted_traffic = predict_traffic("Random Forest", 290, 0, 0, 50, 14, "Clear", "sky is clear", "None")
+print(f"Predicția volumului de trafic: {predicted_traffic:.2f} vehicule/h")
+
+
+
